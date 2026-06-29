@@ -14,10 +14,14 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
-from pynput import keyboard
+
+try:
+    from pynput import keyboard
+except ImportError:  # pragma: no cover - optional dependency for non-scanner environments
+    keyboard = None
 
 """exemple of config.local:
-url=https://totot.toto.fr
+url=https://v2.hiboutheque.fr
 login=trucMuche
 password=my_password!
 mediatheque_id=1111-my-mediatheque-id
@@ -86,7 +90,7 @@ class HibouAutomation:
             self.driver.get(f"{self.base_url}/connexion")
             time.sleep(2)  # Attendre le chargement complet
             identifiant_field = password_field = connexion_button = None
-            original_selectors_method = False   # diasble original selectors method for now, as it seems to be the one causing issues on some sites. We can re-enable it later if needed.
+            original_selectors_method = False   # disable original selectors method for now, as it seems to be the one causing issues on some sites. We can re-enable it later if needed.
             if original_selectors_method:   # Méthode 1: Sélecteurs originaux
                 try:
                     print("  → Tentative avec sélecteurs originaux...")
@@ -160,19 +164,26 @@ class HibouAutomation:
             print("   - Essayez de vous connecter manuellement d'abord")
             return False
 
-    def go_to_pret_page(self):
-        """Navigation vers la page de prêt/retour"""
-        print("📄 Navigation vers la page de prêt/retour...")
+    def go_to_page(self, page_name, page_end_url, wait_title_xpath):
+        """Navigation vers la page"""
+        print(f"📄 Navigation vers la page de '{page_name}'...")
         try:
-            url = f"{self.base_url}/mediatheque/{self.mediatheque_id}/faire-un-pret-ou-un-retour/"
+            url = f"{self.base_url}/mediatheque/{self.mediatheque_id}/{page_end_url}/"
             self.driver.get(url)
-
-            self.wait.until(EC.presence_of_element_located((By.XPATH, "//h1[contains(text(), 'Faire un prêt') or contains(text(), 'prêt')]")))
-            print("✓ Page de prêt/retour chargée")
+            self.wait.until(EC.presence_of_element_located((By.XPATH, wait_title_xpath)))
+            print(f"✓ Page de '{page_name}' chargée")
             return True
         except Exception as e:
-            print(f"❌ Erreur lors de la navigation: {e}")
+            print(f"❌ Erreur lors de la navigation vers '{page_name}': {e}")
             return False
+
+    def go_to_pret_page(self):
+        """Navigation vers la page de prêt/retour"""
+        return self.go_to_page(
+            page_name="prêt/retour",
+            page_end_url="faire-un-pret-ou-un-retour",
+            wait_title_xpath="//h1[contains(text(), 'Faire un prêt') or contains(text(), 'prêt')]"
+        )
 
     def on_press(self, key):
         """Callback pour chaque touche pressée du scanner"""
@@ -317,6 +328,10 @@ class HibouAutomation:
 
     def start_scanner_listener(self):
         """Démarre l'écoute du scanner"""
+        if keyboard is None:
+            print("⚠ pynput n'est pas disponible, l'écoute du scanner est désactivée")
+            return
+
         print("\n" + "="*60)
         print("🚀 ÉCOUTE DU SCANNER ACTIVÉE")
         print("="*60)
@@ -328,6 +343,29 @@ class HibouAutomation:
 
         self.listener = keyboard.Listener(on_press=self.on_press)
         self.listener.start()
+
+    def prepare_for_operations(self):
+        """Prépare le navigateur et la page de prêt/retour pour une exécution manuelle."""
+        self.start_browser()
+        if not self.login_to_site():
+            raise RuntimeError("Échec de la connexion au site")
+        if not self.go_to_pret_page():
+            raise RuntimeError("Échec de la navigation vers la page de prêt/retour")
+
+    def process_manual_entry(self, entry, action_label="opération"):
+        """Traite une ligne saisie manuellement ou importée depuis une base."""
+        entry = (entry or "").strip()
+        if not entry:
+            return False
+
+        print(f"📌 {action_label}: {entry}")
+        if entry.startswith("%"):
+            borrower_number = entry[1:]
+            self._fill_borrower_field(borrower_number)
+        else:
+            exemplaire_number = entry.lstrip(".")
+            self._fill_exemplaire_field(exemplaire_number)
+        return True
 
     def run(self):
         """Lance la séquence complète"""

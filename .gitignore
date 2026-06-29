@@ -1,1 +1,3 @@
 config.local
+.venv/
+__pycache__/
